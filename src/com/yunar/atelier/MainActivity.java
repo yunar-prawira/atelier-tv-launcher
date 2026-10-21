@@ -410,6 +410,9 @@ public class MainActivity extends Activity {
         shortcuts.addView(chip("Settings", new Runnable() {
             @Override public void run() { openComponent(TV_SETTINGS, TV_SETTINGS_ACTIVITY); }
         }));
+        shortcuts.addView(chip("Setup", new Runnable() {
+            @Override public void run() { showSetup(); }
+        }));
         shortcuts.addView(chip(editMode ? "Done" : "Edit", new Runnable() {
             @Override public void run() { editMode = !editMode; buildHome(); }
         }));
@@ -804,6 +807,146 @@ public class MainActivity extends Activity {
         menuActions.clear();
         menuIndex = 0;
         closePage();
+    }
+
+    // ------------------------------------------------------------- setup page
+
+    /** Everything the owner can change without a PC: wordmark, adding by package, resetting. */
+    private void showSetup() {
+        FrameLayout page = new FrameLayout(this);
+        page.setBackgroundColor(0xF5080809);
+
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(dp(96), dp(68), dp(96), dp(48));
+
+        TextView head = new TextView(this);
+        head.setText("SETUP");
+        head.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        head.setTextColor(GOLD);
+        head.setLetterSpacing(0.36f);
+        col.addView(head);
+
+        View rule = new View(this);
+        rule.setBackgroundColor(0x40C8A96A);
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, dp(1));
+        rlp.topMargin = dp(16);
+        rlp.bottomMargin = dp(26);
+        col.addView(rule, rlp);
+
+        col.addView(setupRow("Wordmark: " + readTitle(), new Runnable() {
+            @Override public void run() {
+                askText("Wordmark", readTitle(), new TextSink() {
+                    @Override public void accept(String value) {
+                        if (value.trim().length() > 0) { writeTitle(value.trim()); }
+                        showSetup();
+                    }
+                });
+            }
+        }));
+
+        col.addView(setupRow("Add app by package name", new Runnable() {
+            @Override public void run() {
+                askText("Package name (e.g. com.netflix.ninja)", "", new TextSink() {
+                    @Override public void accept(String value) {
+                        addByPackage(value.trim());
+                        showSetup();
+                    }
+                });
+            }
+        }));
+
+        col.addView(setupRow("Reset home row to default", new Runnable() {
+            @Override public void run() {
+                List<String> base = new ArrayList<String>();
+                for (String p : Apps.LIST) { base.add(p); }
+                writeOrder(base);
+                buildHome();
+            }
+        }));
+
+        col.addView(setupRow("Close", new Runnable() {
+            @Override public void run() { closePage(); }
+        }));
+
+        TextView hint = new TextView(this);
+        hint.setText("Applications lists every launchable app. Row holds " + MAX_ROW + ".");
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        hint.setTextColor(0x66F6F3EE);
+        hint.setLetterSpacing(0.14f);
+        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(-2, -2);
+        hlp.topMargin = dp(22);
+        col.addView(hint, hlp);
+
+        page.addView(col, new FrameLayout.LayoutParams(-1, -1));
+        openPage(page);
+    }
+
+    private View setupRow(String text, final Runnable action) {
+        TextView v = new TextView(this);
+        v.setText(text);
+        v.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        v.setTextColor(0xFFE2DDD5);
+        v.setPadding(dp(22), dp(14), dp(22), dp(14));
+        v.setFocusable(true);
+        v.setFocusableInTouchMode(true);
+        v.setBackground(chipFrame());
+        v.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View x) { action.run(); }
+        });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+        lp.topMargin = dp(10);
+        v.setLayoutParams(lp);
+        return v;
+    }
+
+    private interface TextSink { void accept(String value); }
+
+    /** Small dialog with a text field; the TV's own keyboard handles typing. */
+    private void askText(String label, String initial, final TextSink sink) {
+        final android.widget.EditText field = new android.widget.EditText(this);
+        field.setText(initial);
+        field.setSelectAllOnFocus(true);
+        field.setSingleLine(true);
+        field.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(label)
+                .setView(field)
+                .setPositiveButton("Save", new android.content.DialogInterface.OnClickListener() {
+                    @Override public void onClick(android.content.DialogInterface d, int w) {
+                        sink.accept(field.getText().toString());
+                    }
+                })
+                .setNegativeButton("Cancel", new android.content.DialogInterface.OnClickListener() {
+                    @Override public void onClick(android.content.DialogInterface d, int w) { showSetup(); }
+                })
+                .show();
+    }
+
+    private void writeTitle(String value) {
+        File f = homeDir() == null ? null : new File(homeDir(), "title.txt");
+        if (f == null) { return; }
+        FileWriter w = null;
+        try { w = new FileWriter(f, false); w.write(value); }
+        catch (Exception ignored) { }
+        finally { if (w != null) { try { w.close(); } catch (Exception ignored) { } } }
+    }
+
+    private void addByPackage(String pkg) {
+        String msg;
+        try { getPackageManager().getApplicationInfo(pkg, 0); }
+        catch (Exception missing) { toast("No such package: " + pkg); return; }
+        List<String> list = readOrder();
+        if (list.contains(pkg)) { toast("Already on the row"); return; }
+        if (list.size() >= MAX_ROW) { toast("Row is full (max " + MAX_ROW + ")"); return; }
+        list.add(pkg);
+        writeOrder(list);
+        buildHome();
+    }
+
+    private void toast(String text) {
+        try { android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_SHORT).show(); }
+        catch (Exception ignored) { }
     }
 
     // ------------------------------------------------------------- launching
