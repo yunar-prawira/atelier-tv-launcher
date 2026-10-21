@@ -62,6 +62,7 @@ public class MainActivity extends Activity {
 
     private TextView clock;
     private TextView dateline;
+    private TextView greeting;
     private View firstTile;
     private FrameLayout root;
     private List<String> order = new ArrayList<String>();
@@ -91,6 +92,9 @@ public class MainActivity extends Activity {
     private final SimpleDateFormat timeFmt = new SimpleDateFormat("HH:mm", Locale.US);
     private final SimpleDateFormat dateFmt =
             new SimpleDateFormat("EEEE, d MMMM yyyy", new Locale("id", "ID"));
+
+    /** Mockup numbers are px on a 1920x1080 canvas; this maps them to the real panel. */
+    private int px(float v) { return Math.round(v * getResources().getDisplayMetrics().widthPixels / 1920f); }
 
     private int dp(float v) {
         return Math.round(TypedValue.applyDimension(
@@ -332,44 +336,61 @@ public class MainActivity extends Activity {
         root.setClipChildren(false);
         root.addView(new Stage(), new FrameLayout.LayoutParams(-1, -1));
 
-        LinearLayout column = new LinearLayout(this);
-        column.setOrientation(LinearLayout.VERTICAL);
-        column.setClipChildren(false);
-        column.setPadding(dp(96), dp(88), dp(64), dp(48));
+        // ---- header (mockup D): greeting / clock / hairline / date, right aligned ----
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.VERTICAL);
+        header.setGravity(Gravity.END);
+        header.setClipChildren(false);
+
+        greeting = new TextView(this);
+        greeting.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(16));
+        greeting.setTextColor(GOLD);
+        greeting.setLetterSpacing(0.30f);
+        greeting.setIncludeFontPadding(false);
+        header.addView(greeting);
 
         clock = new TextView(this);
-        clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, 104);
-        clock.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+        clock.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(196));
+        clock.setTypeface(Typeface.create("serif", Typeface.NORMAL));
         clock.setTextColor(INK);
         clock.setIncludeFontPadding(false);
-        clock.setLetterSpacing(0.02f);
-        column.addView(clock);
-
-        dateline = new TextView(this);
-        dateline.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        dateline.setTextColor(GOLD);
-        dateline.setLetterSpacing(0.36f);
-        dateline.setIncludeFontPadding(false);
-        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(-2, -2);
-        dlp.topMargin = dp(12);
-        column.addView(dateline, dlp);
+        clock.setLetterSpacing(-0.01f);
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(-2, -2);
+        clp.topMargin = px(18);
+        header.addView(clock, clp);
 
         View rule = new View(this);
-        rule.setBackgroundColor(0x40C8A96A);
-        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(dp(196), dp(1));
-        rlp.topMargin = dp(30);
-        column.addView(rule, rlp);
+        rule.setBackgroundColor(0x80C8A96A);
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(px(96), Math.max(1, px(1)));
+        rlp.topMargin = px(26);
+        rlp.gravity = Gravity.END;
+        header.addView(rule, rlp);
 
-        // One row, justified edge to edge: tiles share the width equally and the row
-        // re-flows automatically when an app is removed. No scroll, so nothing clips.
+        dateline = new TextView(this);
+        dateline.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(19));
+        dateline.setTextColor(INK);
+        dateline.setAlpha(0.9f);
+        dateline.setLetterSpacing(0.30f);
+        dateline.setIncludeFontPadding(false);
+        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(-2, -2);
+        dlp.topMargin = px(16);
+        header.addView(dateline, dlp);
+
+        FrameLayout.LayoutParams headerLp = new FrameLayout.LayoutParams(-2, -2);
+        headerLp.gravity = Gravity.TOP | Gravity.END;
+        headerLp.setMargins(0, px(66), px(120), 0);
+        root.addView(header, headerLp);
+
+        // ---- app row (mockup D): glass cards, big, ALL APPS on the far right ----
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.TOP);
+        row.setGravity(Gravity.BOTTOM);
         row.setClipChildren(false);
-        row.setPadding(dp(8), dp(6), dp(8), dp(6));
-        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
-        rowLp.topMargin = dp(34);
-        column.addView(row, rowLp);
+        row.setPadding(px(128), 0, px(120), 0);
+        FrameLayout.LayoutParams rowLp = new FrameLayout.LayoutParams(-1, px(116));
+        rowLp.gravity = Gravity.BOTTOM;
+        rowLp.bottomMargin = px(152);
+        root.addView(row, rowLp);
 
         PackageManager pm = getPackageManager();
         firstTile = null;
@@ -381,80 +402,87 @@ public class MainActivity extends Activity {
             String label;
             try {
                 icon = pm.getApplicationIcon(pkg);
-                label = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString();
+                label = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString().toUpperCase(Locale.US);
             } catch (Exception missing) { continue; }
-            View tile = tile(icon, label, false, new Runnable() {
+            View card = appCard(label, icon, new Runnable() {
                 @Override public void run() {
                     if (editMode) { showMenu(pkg, index, false); } else { launchPackage(pkg); }
                 }
             }, new Runnable() {
                 @Override public void run() { showMenu(pkg, index, false); }
             });
-            LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(0, -2, 1f);
-            row.addView(tile, tlp);
-            tileViews.add(tile);
-            if (firstTile == null) { firstTile = tile; }
+            row.addView(card, cardLp(shown == 0));
+            tileViews.add(card);
+            if (firstTile == null) { firstTile = card; }
             shown++;
         }
 
         if (shown == 0) {
             TextView empty = new TextView(this);
-            empty.setText("No apps yet — open Applications\nand hold OK on an app to add it");
-            empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+            empty.setText("No apps yet — ALL APPS, then hold OK on an app");
+            empty.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(17));
             empty.setTextColor(0xFFE2DDD5);
-            empty.setGravity(Gravity.START);
-            empty.setPadding(dp(18), dp(14), dp(18), dp(14));
+            empty.setPadding(px(24), px(20), px(24), px(20));
             empty.setFocusable(true);
             empty.setFocusableInTouchMode(true);
-            empty.setBackground(chipFrame());
+            empty.setBackground(cardFrame());
             empty.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View v) { showAllApps(); }
             });
-            LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(-2, -2);
+            LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(px(420), px(116));
+            elp.rightMargin = px(22);
             row.addView(empty, elp);
             firstTile = empty;
+            tileViews.add(empty);
         }
 
-        root.addView(column, new FrameLayout.LayoutParams(-1, -1));
+        View allApps = allAppsCard();
+        row.addView(allApps, cardLp(false));
 
         TextView mark = new TextView(this);
         mark.setText(readTitle());
-        mark.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        mark.setTextColor(0x80F6F3EE);
+        mark.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(15));
+        mark.setTextColor(0xB3F6F3EE);
         mark.setLetterSpacing(0.62f);
         FrameLayout.LayoutParams mlp = new FrameLayout.LayoutParams(-2, -2);
-        mlp.gravity = Gravity.TOP | Gravity.END;
-        mlp.setMargins(0, dp(92), dp(64), 0);
+        mlp.gravity = Gravity.TOP | Gravity.START;
+        mlp.setMargins(px(120), px(96), 0, 0);
         root.addView(mark, mlp);
 
-        LinearLayout shortcuts = new LinearLayout(this);
-        shortcuts.setOrientation(LinearLayout.HORIZONTAL);
-        shortcuts.setGravity(Gravity.CENTER_VERTICAL);
-        shortcuts.addView(chip("Input", new Runnable() {
+        // ---- dock (mockup D): one translucent pill, centred ----
+        LinearLayout dock = new LinearLayout(this);
+        dock.setOrientation(LinearLayout.HORIZONTAL);
+        dock.setGravity(Gravity.CENTER_VERTICAL);
+        GradientDrawable pillBg = new GradientDrawable();
+        pillBg.setColor(0x1AFFFFFF);
+        pillBg.setCornerRadius(px(33));
+        pillBg.setStroke(Math.max(1, px(1)), 0x33FBF8F3);
+        dock.setBackground(pillBg);
+        dock.setPadding(px(46), 0, px(46), 0);
+        dock.addView(dockItem("INPUT", new Runnable() {
             @Override public void run() { openQuickPanel(); }
         }));
-        shortcuts.addView(chip("Applications", new Runnable() {
+        dock.addView(dockItem("APPLICATIONS", new Runnable() {
             @Override public void run() { showAllApps(); }
         }));
-        shortcuts.addView(chip("Settings", new Runnable() {
+        dock.addView(dockItem("SETTINGS", new Runnable() {
             @Override public void run() { openComponent(TV_SETTINGS, TV_SETTINGS_ACTIVITY); }
         }));
-        shortcuts.addView(chip("Setup", new Runnable() {
+        dock.addView(dockItem("SETUP", new Runnable() {
             @Override public void run() { showSetup(); }
         }));
-        shortcuts.addView(chip(editMode ? "Done" : "Edit", new Runnable() {
+        dock.addView(dockItem(editMode ? "DONE" : "EDIT", new Runnable() {
             @Override public void run() { editMode = !editMode; buildHome(); }
         }));
 
-        FrameLayout.LayoutParams slp = new FrameLayout.LayoutParams(-2, -2);
-        slp.gravity = Gravity.BOTTOM | Gravity.END;
-        slp.setMargins(0, 0, dp(56), dp(46));
+        FrameLayout.LayoutParams dockLp = new FrameLayout.LayoutParams(-2, px(66));
+        dockLp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        dockLp.bottomMargin = px(52);
         if (moveMode) {
-            // the dock must not steal the D-pad while an app is being reordered
-            shortcuts.setDescendantFocusability(android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS);
-            shortcuts.setAlpha(0.45f);
+            dock.setDescendantFocusability(android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+            dock.setAlpha(0.45f);
         }
-        root.addView(shortcuts, slp);
+        root.addView(dock, dockLp);
 
         if (moveMode) {
             TextView hint = new TextView(this);
@@ -510,7 +538,15 @@ public class MainActivity extends Activity {
 
     private void paintTime() {
         Date now = new Date();
-        clock.setText(timeFmt.format(now));
+        clock.setText(timeFmt.format(now));                     // HH:mm — 24 hour, always
+        if (greeting != null) {
+            int h = Integer.parseInt(new java.text.SimpleDateFormat("H", Locale.US).format(now));
+            greeting.setText(h < 5 ? "GOOD NIGHT"
+                    : h < 11 ? "GOOD MORNING"
+                    : h < 17 ? "GOOD AFTERNOON"
+                    : h < 21 ? "GOOD EVENING"
+                    : "GOOD NIGHT");
+        }
         dateline.setText(dateFmt.format(now).toUpperCase(Locale.US));
     }
 
@@ -1170,6 +1206,147 @@ public class MainActivity extends Activity {
             box.setLayoutParams(lp);
         }
         return box;
+    }
+
+    /** Glass card that holds one app: plate + label, mockup D geometry (220x116 @1920 canvas). */
+    private View appCard(String label, Drawable icon, final Runnable onClick, final Runnable onLong) {
+        TileBox box = new TileBox(this);
+        box.setOrientation(LinearLayout.HORIZONTAL);
+        box.setGravity(Gravity.CENTER_VERTICAL);
+        box.setPadding(px(26), 0, px(18), 0);
+        box.setFocusable(true);
+        box.setFocusableInTouchMode(true);
+        box.setBackground(cardFrame());
+        box.setLongAction(onLong);
+        box.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { onClick.run(); }
+        });
+
+        FrameLayout plate = new FrameLayout(this);
+        GradientDrawable plateBg = new GradientDrawable();
+        plateBg.setColor(0x1AFFFFFF);
+        plateBg.setCornerRadius(px(17));
+        plate.setBackground(plateBg);
+        ImageView img = new ImageView(this);
+        img.setImageDrawable(icon);
+        img.setAlpha(0.95f);
+        plate.addView(img, new FrameLayout.LayoutParams(px(44), px(44), Gravity.CENTER));
+        box.addView(plate, new LinearLayout.LayoutParams(px(62), px(62)));
+
+        TextView tv = new TextView(this);
+        tv.setText(label);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(15));
+        tv.setTextColor(INK);
+        tv.setAlpha(0.94f);
+        tv.setLetterSpacing(0.10f);
+        tv.setMaxLines(1);
+        tv.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-2, -2);
+        tlp.leftMargin = px(20);
+        box.addView(tv, tlp);
+        return box;
+    }
+
+    /** The far-right door to every launchable app: outline card, grid glyph, no brand colour. */
+    private View allAppsCard() {
+        TileBox box = new TileBox(this);
+        box.setOrientation(LinearLayout.HORIZONTAL);
+        box.setGravity(Gravity.CENTER_VERTICAL);
+        box.setPadding(px(26), 0, px(18), 0);
+        box.setFocusable(true);
+        box.setFocusableInTouchMode(true);
+        box.setBackground(cardFrame());
+
+        FrameLayout plate = new FrameLayout(this);
+        GradientDrawable plateBg = new GradientDrawable();
+        plateBg.setColor(0x0DFFFFFF);
+        plateBg.setCornerRadius(px(17));
+        plateBg.setStroke(Math.max(1, px(1)), 0x4DFBF8F3);
+        plate.setBackground(plateBg);
+        plate.addView(new GridGlyph(this), new FrameLayout.LayoutParams(px(32), px(32), Gravity.CENTER));
+        box.addView(plate, new LinearLayout.LayoutParams(px(62), px(62)));
+
+        TextView tv = new TextView(this);
+        tv.setText("ALL APPS");
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(15));
+        tv.setTextColor(INK);
+        tv.setAlpha(0.85f);
+        tv.setLetterSpacing(0.10f);
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-2, -2);
+        tlp.leftMargin = px(20);
+        box.addView(tv, tlp);
+
+        box.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showAllApps(); }
+        });
+        return box;
+    }
+
+    private LinearLayout.LayoutParams cardLp(boolean first) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(px(220), px(116));
+        lp.rightMargin = px(22);
+        return lp;
+    }
+
+    private StateListDrawable cardFrame() {
+        StateListDrawable d = new StateListDrawable();
+        GradientDrawable on = new GradientDrawable();
+        on.setColor(0x33FFFFFF);
+        on.setCornerRadius(px(26));
+        on.setStroke(Math.max(2, px(2)), GOLD);
+        GradientDrawable off = new GradientDrawable();
+        off.setColor(0x1FFFFFFF);
+        off.setCornerRadius(px(26));
+        off.setStroke(Math.max(1, px(1)), 0x44FBF8F3);
+        d.addState(new int[]{android.R.attr.state_focused}, on);
+        d.addState(new int[]{}, off);
+        return d;
+    }
+
+    private View dockItem(String text, final Runnable action) {
+        TextView v = new TextView(this);
+        v.setText(text);
+        v.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(16));
+        v.setLetterSpacing(0.30f);
+        v.setTextColor(new android.content.res.ColorStateList(
+                new int[][]{new int[]{android.R.attr.state_focused}, new int[]{}},
+                new int[]{GOLD, 0xCCFBF8F3}));
+        v.setPadding(px(20), px(8), px(20), px(8));
+        v.setFocusable(true);
+        v.setFocusableInTouchMode(true);
+        GradientDrawable focused = new GradientDrawable();
+        focused.setColor(0x26FFFFFF);
+        focused.setCornerRadius(px(26));
+        StateListDrawable bg = new StateListDrawable();
+        bg.addState(new int[]{android.R.attr.state_focused}, focused);
+        bg.addState(new int[]{}, new GradientDrawable());
+        v.setBackground(bg);
+        v.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View x) { action.run(); }
+        });
+        return v;
+    }
+
+    /** 2x2 grid glyph used by the ALL APPS card (no font dependency). */
+    private class GridGlyph extends View {
+        GridGlyph(android.content.Context c) { super(c); }
+
+        @Override protected void onDraw(Canvas c) {
+            Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+            p.setStyle(Paint.Style.STROKE);
+            p.setColor(0xE6FBF8F3);
+            p.setStrokeWidth(Math.max(1.5f, px(2)));
+            float cell = getWidth() * 0.34f, gap = getWidth() * 0.14f;
+            float ox = (getWidth() - (cell * 2 + gap)) / 2f;
+            float oy = (getHeight() - (cell * 2 + gap)) / 2f;
+            float r = cell * 0.22f;
+            for (int r2 = 0; r2 < 2; r2++) {
+                for (int c2 = 0; c2 < 2; c2++) {
+                    float left = ox + c2 * (cell + gap), top = oy + r2 * (cell + gap);
+                    c.drawRoundRect(new android.graphics.RectF(left, top, left + cell, top + cell), r, r, p);
+                }
+            }
+        }
     }
 
     private View chip(String text, final Runnable action) {
