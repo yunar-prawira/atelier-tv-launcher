@@ -64,5 +64,7 @@ if [ ! -f "$KS" ]; then
   keytool -genkeypair -keystore "$KS" -storepass "$KEYSTORE_PASS" -keypass "$KEYSTORE_PASS" \
     -alias atelier -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=atelier" >/dev/null 2>&1
 fi
-"$BT/apksigner" sign --ks "$KS" --ks-pass "pass:$KEYSTORE_PASS" --out out/atelier.apk out/aligned.apk
+"$BT/apksigner" sign --ks "$KS" --ks-pass "pass:$KEYSTORE_PASS" --out out/atelier.apk out/aligned.apk 2>/tmp/atelier-sign.err \
+  || { echo "Signing failed with $KS — usually KEYSTORE_PASS does not match that keystore." >&2
+       tail -5 /tmp/atelier-sign.err >&2; exit 1; }
 echo "Built out/atelier.apk ($VERSION_NAME / $VERSION_CODE) signed with $KS"
