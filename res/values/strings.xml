@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Atelier</string>
+    <string name="a11y_desc">Lets the Atelier home screen open Settings from the remote\'s gear key while any app is in front.</string>
+</resources>

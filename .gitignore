@@ -1,0 +1,13 @@
+# build output
+out/
+# signing material — never publish, never keep inside the repo
+*.jks
+*.keystore
+key.jks
+# local device state (this list is per-TV; apps.txt.example is the template)
+apps.txt
+# internal project log (contains the owner's network details)
+STATUS.md
+# local logs / captures
+*.log
+*.png
