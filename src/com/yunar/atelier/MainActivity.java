@@ -81,6 +81,7 @@ public class MainActivity extends Activity {
     private long menuOpenedAt = 0L;
     private long pageOpenedAt = 0L;
     private boolean lastInteractive = true;
+    private boolean resumedNow = false;
     private boolean arcPending = false;
     private int homeFailures = 0;
 
@@ -154,7 +155,7 @@ public class MainActivity extends Activity {
             startActivity(ts);
             new Handler().postDelayed(new Runnable() {
                 @Override public void run() {
-                    if (!hasWindowFocus()) { return; }   // user already moved on; don't yank them
+                    if (resumedNow) { return; }   // still on our own home screen, nothing to undo
                     Intent home = new Intent(Intent.ACTION_MAIN);
                     home.addCategory(Intent.CATEGORY_HOME);
                     home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -179,16 +180,24 @@ public class MainActivity extends Activity {
         if (menu != null) { closeMenu(); }
         else if (page != null) { closePage(); }
         watchWake();
-        pruneIfStale();
+        resumedNow = true;
+        if (rowLooksStale()) { buildHome(); }
     }
 
-    /** After an uninstall the tile should disappear without the owner doing anything. */
-    private void pruneIfStale() {
-        if (order == null || order.isEmpty()) { return; }
-        for (String p : new ArrayList<String>(order)) {
+    @Override
+    protected void onPause() {
+        resumedNow = false;
+        super.onPause();
+    }
+
+    /** Rebuild only when an entry vanished or a new one appeared; nothing is written here. */
+    private boolean rowLooksStale() {
+        if (order == null || order.isEmpty()) { return false; }
+        for (String p : order) {
             try { getPackageManager().getApplicationInfo(p, 0); }
-            catch (Exception gone) { buildHome(); return; }
+            catch (Exception gone) { return true; }
         }
+        return false;
     }
 
     // ------------------------------------------------------------- HDMI ARC audio
@@ -386,6 +395,24 @@ public class MainActivity extends Activity {
             shown++;
         }
 
+        if (shown == 0) {
+            TextView empty = new TextView(this);
+            empty.setText("No apps yet — open Applications\nand hold OK on an app to add it");
+            empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+            empty.setTextColor(0xFFE2DDD5);
+            empty.setGravity(Gravity.START);
+            empty.setPadding(dp(18), dp(14), dp(18), dp(14));
+            empty.setFocusable(true);
+            empty.setFocusableInTouchMode(true);
+            empty.setBackground(chipFrame());
+            empty.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) { showAllApps(); }
+            });
+            LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(-2, -2);
+            row.addView(empty, elp);
+            firstTile = empty;
+        }
+
         root.addView(column, new FrameLayout.LayoutParams(-1, -1));
 
         TextView mark = new TextView(this);
@@ -420,7 +447,24 @@ public class MainActivity extends Activity {
         FrameLayout.LayoutParams slp = new FrameLayout.LayoutParams(-2, -2);
         slp.gravity = Gravity.BOTTOM | Gravity.END;
         slp.setMargins(0, 0, dp(56), dp(46));
+        if (moveMode) {
+            // the dock must not steal the D-pad while an app is being reordered
+            shortcuts.setDescendantFocusability(android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+            shortcuts.setAlpha(0.45f);
+        }
         root.addView(shortcuts, slp);
+
+        if (moveMode) {
+            TextView hint = new TextView(this);
+            hint.setText("Left / Right to move     OK to drop     BACK to cancel");
+            hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            hint.setTextColor(GOLD);
+            hint.setLetterSpacing(0.18f);
+            FrameLayout.LayoutParams hlp = new FrameLayout.LayoutParams(-2, -2);
+            hlp.gravity = Gravity.BOTTOM | Gravity.START;
+            hlp.setMargins(dp(96), 0, 0, dp(52));
+            root.addView(hint, hlp);
+        }
 
         setContentView(root);
         paintTime();
@@ -475,7 +519,8 @@ public class MainActivity extends Activity {
     private List<String> readOrder() {
         List<String> out = new ArrayList<String>();
         File f = homeDir() == null ? null : new File(homeDir(), "apps.txt");
-        if (f != null && f.exists()) {
+        boolean present = f != null && f.exists();
+        if (present) {
             BufferedReader r = null;
             try {
                 r = new BufferedReader(new FileReader(f));
@@ -487,7 +532,9 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) {
             } finally { if (r != null) { try { r.close(); } catch (Exception ignored) { } } }
         }
-        if (out.isEmpty()) { for (String p : Apps.LIST) { out.add(p); } }
+        // Missing file = first run, use the list compiled into this build. An existing but empty
+        // file means the owner removed everything: keep it empty instead of resurrecting the default.
+        if (!present) { for (String p : Apps.LIST) { out.add(p); } }
         return out;
     }
 
@@ -496,31 +543,41 @@ public class MainActivity extends Activity {
      * resolved) so a stale row can never shift the tile indices under the remote.
      */
     private List<String> reconcile(List<String> list) {
+        // Display filter only. PackageManager can be mid-scan at boot and external storage may not
+        // be mounted yet, so a missing entry here is NOT proof of an uninstall — never write it away.
         List<String> kept = new ArrayList<String>();
-        boolean changed = false;
         for (String pkg : list) {
-            boolean installed;
-            try { getPackageManager().getApplicationInfo(pkg, 0); installed = true; }
-            catch (Exception gone) { installed = false; }
-            if (installed) { kept.add(pkg); } else { changed = true; }
-        }
-        if (kept.isEmpty()) { kept.addAll(list); changed = false; }
-        if (changed) {
-            android.util.Log.i("ATELIER_HOME", "dropped " + (list.size() - kept.size()) + " missing package(s)");
-            writeOrder(kept);
+            try { getPackageManager().getApplicationInfo(pkg, 0); kept.add(pkg); }
+            catch (Exception notYet) { android.util.Log.i("ATELIER_HOME", "not resolvable now: " + pkg); }
         }
         return kept;
     }
 
     private void writeOrder(List<String> list) {
-        File f = homeDir() == null ? null : new File(homeDir(), "apps.txt");
-        if (f == null) { return; }
-        FileWriter w = null;
+        File dir = homeDir();
+        if (dir == null) { return; }
+        File f = new File(dir, "apps.txt");
+        File tmp = new File(dir, "apps.txt.tmp");
+        java.io.FileOutputStream fos = null;
         try {
-            w = new FileWriter(f, false);
+            fos = new java.io.FileOutputStream(tmp, false);
+            java.io.OutputStreamWriter w = new java.io.OutputStreamWriter(fos, "UTF-8");
             for (String p : list) { w.write(p); w.write("\n"); }
-        } catch (Exception ignored) {
-        } finally { if (w != null) { try { w.close(); } catch (Exception ignored) { } } }
+            w.flush();
+            fos.getFD().sync();          // survive a power cut on a TV that is switched off at the wall
+            w.close();
+            fos = null;
+            if (f.exists()) {
+                File bak = new File(dir, "apps.txt.bak");
+                if (bak.exists() && !bak.delete()) { android.util.Log.i("ATELIER_HOME", "bak not replaceable"); }
+                f.renameTo(bak);
+            }
+            if (!tmp.renameTo(f)) {
+                android.util.Log.e("ATELIER_HOME", "could not promote apps.txt.tmp");
+            }
+        } catch (Exception e) {
+            android.util.Log.e("ATELIER_HOME", "writeOrder failed", e);
+        } finally { if (fos != null) { try { fos.close(); } catch (Exception ignored) { } } }
     }
 
     private String readTitle() {
@@ -856,12 +913,22 @@ public class MainActivity extends Activity {
             }
         }));
 
-        col.addView(setupRow("Reset home row to default", new Runnable() {
+        col.addView(setupRow("Reset to the apps compiled into this build", new Runnable() {
             @Override public void run() {
-                List<String> base = new ArrayList<String>();
-                for (String p : Apps.LIST) { base.add(p); }
-                writeOrder(base);
-                buildHome();
+                new android.app.AlertDialog.Builder(MainActivity.this)
+                        .setTitle("Replace the row?")
+                        .setMessage("The row will be replaced with the " + Apps.LIST.length
+                                + " apps compiled into this build. Your current row is kept as apps.txt.bak.")
+                        .setPositiveButton("Replace", new android.content.DialogInterface.OnClickListener() {
+                            @Override public void onClick(android.content.DialogInterface d, int w) {
+                                List<String> base = new ArrayList<String>();
+                                for (String p : Apps.LIST) { base.add(p); }
+                                writeOrder(base);
+                                buildHome();
+                            }
+                        })
+                        .setNegativeButton("Cancel", null)
+                        .show();
             }
         }));
 
@@ -933,15 +1000,17 @@ public class MainActivity extends Activity {
     }
 
     private void addByPackage(String pkg) {
-        String msg;
+        if (pkg.length() == 0) { return; }
         try { getPackageManager().getApplicationInfo(pkg, 0); }
         catch (Exception missing) { toast("No such package: " + pkg); return; }
+        if (resolveLaunch(pkg) == null) { toast("That package has no launchable screen"); return; }
         List<String> list = readOrder();
         if (list.contains(pkg)) { toast("Already on the row"); return; }
         if (list.size() >= MAX_ROW) { toast("Row is full (max " + MAX_ROW + ")"); return; }
         list.add(pkg);
         writeOrder(list);
         buildHome();
+        toast("Added " + pkg);
     }
 
     private void toast(String text) {
@@ -985,7 +1054,13 @@ public class MainActivity extends Activity {
         Intent i = new Intent();
         i.setClassName(pkg, cls);
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        try { startActivity(i); } catch (Exception ignored) { }
+        try { startActivity(i); return; } catch (Exception ignored) { }
+        try {
+            startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            return;
+        } catch (Exception ignored) { }
+        toast("Settings could not be opened on this firmware");
     }
 
     // ------------------------------------------------------------- views
@@ -1122,6 +1197,9 @@ public class MainActivity extends Activity {
         }
 
         if (moveMode) {
+            if (code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN) {
+                return true;   // keep focus on the row while reordering
+            }
             if (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT) {
                 int from = movePkg == null ? -1 : order.indexOf(movePkg);
                 if (from < 0) {

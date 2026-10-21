@@ -18,6 +18,7 @@ BT=$(ls -d "$SDK"/build-tools/* 2>/dev/null | sort -V | tail -1)
 [ -f "$JAR" ] && [ -n "$BT" ] && [ -x "$BT/aapt2" ] \
   || { echo "Android SDK missing platform-34/build-tools (set ANDROID_HOME)." >&2; exit 1; }
 command -v zip >/dev/null 2>&1 || { echo "zip is required (apt install zip)." >&2; exit 1; }
+: "${KEYSTORE_PASS:?set KEYSTORE_PASS to your keystore password - never commit the keystore}"
 
 [ -f apps.txt ] || cp apps.txt.example apps.txt
 VERSION_CODE=${VERSION_CODE:-2}
@@ -57,7 +58,6 @@ cp out/base.apk out/unsigned.apk
 "$BT/zipalign" -f 4 out/unsigned.apk out/aligned.apk
 
 KS=${KEYSTORE:-$HOME/.atelier/key.jks}
-: "${KEYSTORE_PASS:?set KEYSTORE_PASS to your keystore password - never commit the keystore}"
 if [ ! -f "$KS" ]; then
   mkdir -p "$(dirname "$KS")"
   echo "No keystore at $KS - creating one (same key = same app identity, keep it safe)."

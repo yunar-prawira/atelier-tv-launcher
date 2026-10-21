@@ -10,8 +10,9 @@ of it applies to yours.
   `adb connect 100.x.y.z:5555`.
 - Android TV does **not** start Tailscale after a reboot. `always_on_vpn_app` is not enough: the
   VpnService is never started at boot. The launcher starts Tailscale once per boot (guarded by a
-  boot-id in SharedPreferences) and re-issues HOME ~2.6 s later. Verified: adb answered again
-  ~78 s after a reboot with nobody touching the remote.
+  boot-id in SharedPreferences) and, ~2.6 s later, re-issues HOME **only if its own activity is no
+  longer resumed** — i.e. when the Tailscale screen (or anything else) took over. Verified: adb
+  answered again ~78 s after a reboot with nobody touching the remote.
 - Find the TV among tailnet peers by `os: android` in `tailscale status --json`, not by name.
 - adb over TCP goes `offline` while the set sleeps; a wake experiment cannot inject the waking
   key, so let the owner press power and poll for the device to answer.
