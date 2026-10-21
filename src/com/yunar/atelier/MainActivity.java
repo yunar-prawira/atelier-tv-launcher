@@ -82,6 +82,8 @@ public class MainActivity extends Activity {
     private long pageOpenedAt = 0L;
     private boolean lastInteractive = true;
     private boolean resumedNow = false;
+    private String launchingPkg = null;
+    private final List<Intent> pendingLaunches = new ArrayList<Intent>();
     private boolean arcPending = false;
     private int homeFailures = 0;
 
@@ -594,23 +596,45 @@ public class MainActivity extends Activity {
         return "ATELIER";
     }
 
-    private Intent resolveLaunch(String pkg) {
+    /**
+     * Every way this package could be started, best first. On a TV set the LEANBACK entry point is
+     * the real one; getLaunchIntentForPackage can hand back a stub that closes again instantly,
+     * which looks exactly like a dead tile (Netflix / YouTube / Prime Video on TCL do this).
+     */
+    private List<Intent> launchCandidates(String pkg) {
         PackageManager pm = getPackageManager();
-        Intent plain = pm.getLaunchIntentForPackage(pkg);
-        if (plain != null) { return plain; }
+        List<Intent> out = new ArrayList<Intent>();
         Intent[] probes = new Intent[]{
-                new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER),
-                new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)};
+                new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER).setPackage(pkg),
+                new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setPackage(pkg)};
         for (Intent probe : probes) {
-            probe.setPackage(pkg);
             List<ResolveInfo> found = pm.queryIntentActivities(probe, 0);
-            if (found != null && !found.isEmpty()) {
+            if (found == null) { continue; }
+            for (ResolveInfo ri : found) {
+                if (ri.activityInfo == null || !pkg.equals(ri.activityInfo.packageName)) { continue; }
                 Intent i = new Intent(Intent.ACTION_MAIN);
-                i.setClassName(pkg, found.get(0).activityInfo.name);
-                return i;
+                i.setClassName(pkg, ri.activityInfo.name);
+                addCandidate(out, i);
             }
         }
-        return null;
+        Intent plain = pm.getLaunchIntentForPackage(pkg);
+        if (plain != null) { addCandidate(out, plain); }
+        return out;
+    }
+
+    private void addCandidate(List<Intent> out, Intent candidate) {
+        String target = candidate.getComponent() == null ? candidate.toUri(0) : candidate.getComponent().flattenToShortString();
+        for (Intent existing : out) {
+            String seen = existing.getComponent() == null ? existing.toUri(0) : existing.getComponent().flattenToShortString();
+            if (seen.equals(target)) { return; }
+        }
+        out.add(candidate);
+    }
+
+    /** First candidate, used for validation (e.g. "is this package launchable at all"). */
+    private Intent resolveLaunch(String pkg) {
+        List<Intent> all = launchCandidates(pkg);
+        return all.isEmpty() ? null : all.get(0);
     }
 
     private List<String[]> allLaunchable() {
@@ -1021,10 +1045,46 @@ public class MainActivity extends Activity {
     // ------------------------------------------------------------- launching
 
     private void launchPackage(String pkg) {
-        Intent i = resolveLaunch(pkg);
-        if (i == null) { return; }
+        List<Intent> candidates = launchCandidates(pkg);
+        if (candidates.isEmpty()) {
+            toast("No launchable screen in " + pkg);
+            android.util.Log.i("ATELIER_LAUNCH", "nothing to launch for " + pkg);
+            return;
+        }
+        pendingLaunches.clear();
+        pendingLaunches.addAll(candidates);
+        launchingPkg = pkg;
+        tryLaunch(0);
+    }
+
+    /**
+     * Try each entry point until one actually takes over. If we are still the resumed activity
+     * ~1.6 s later, that candidate silently closed itself and the next one gets a turn.
+     */
+    private void tryLaunch(final int index) {
+        if (index >= pendingLaunches.size()) {
+            android.util.Log.i("ATELIER_LAUNCH", "no entry point worked for " + launchingPkg);
+            if (launchingPkg != null) { toast("Could not open " + launchingPkg); }
+            launchingPkg = null;
+            return;
+        }
+        Intent i = pendingLaunches.get(index);
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        try { startActivity(i); } catch (Exception ignored) { }
+        try {
+            startActivity(i);
+            android.util.Log.i("ATELIER_LAUNCH", (i.getComponent() == null ? i.toUri(0)
+                    : i.getComponent().flattenToShortString()) + " -> " + launchingPkg);
+        } catch (Exception refused) {
+            tryLaunch(index + 1);
+            return;
+        }
+        new Handler().postDelayed(new Runnable() {
+            @Override public void run() {
+                if (launchingPkg == null) { return; }        // already opened
+                if (!resumedNow) { launchingPkg = null; return; }   // something took over: success
+                tryLaunch(index + 1);                        // still us: that candidate bounced
+            }
+        }, 1600);
     }
 
     private void openQuickPanel() {
