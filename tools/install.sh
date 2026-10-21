@@ -40,15 +40,20 @@ sleep 2
 say "verify"
 HOME_NOW=$(adb -s "$D" shell cmd package resolve-activity --brief -a android.intent.action.MAIN \
   -c android.intent.category.HOME | tr -d '\r' | tail -1)
+# dumpsys lists the service by LABEL under "Bound services" and by package under "Enabled
+# services"; an empty "Bound services:{}" is what an unbound service looks like.
 BOUND=$(adb -s "$D" shell dumpsys accessibility | grep -m1 "Bound services" | tr -d '\r')
+ENABLED=$(adb -s "$D" shell dumpsys accessibility | grep -m1 "Enabled services" | tr -d '\r')
 CRASHED=$(adb -s "$D" shell dumpsys accessibility | grep -m1 "Crashed services" | tr -d '\r')
 
 echo "HOME        : $HOME_NOW"
 echo "accessibility: $BOUND"
+echo "enabled     : $ENABLED"
 echo "crashed     : $CRASHED"
 
 echo "$HOME_NOW" | grep -q "$PKG" || die "HOME did not move to $PKG"
-echo "$BOUND" | grep -q "$PKG" || die "accessibility not bound - the gear key will NOT work (toggle it again with the app running)"
+echo "$ENABLED" | grep -q "$PKG" || die "accessibility component not enabled - the gear key will NOT work (toggle it again with the app running)"
+case "$BOUND" in *"{}"*) die "accessibility enabled but NOT bound - force-stop, start the app, then re-enable";; esac
 case "$CRASHED" in *"$PKG"*) die "accessibility service is marked crashed - force-stop, restart the app, re-enable";; esac
 
 echo
