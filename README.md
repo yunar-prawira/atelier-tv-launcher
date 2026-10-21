@@ -47,6 +47,47 @@ Deliberately absent from this repository and from its git history:
 So: yes, anyone can build and test this on their own set, and nothing they clone gives them access
 to the machine or TV it was developed on.
 
+## Reaching the TV: same Wi-Fi, or a VPN
+
+Two setups are supported and both use plain `adb`; pick the one that matches where the agent runs.
+
+**A — agent on the same network** (laptop, home server, Raspberry Pi, Hermes on your own machine):
+
+```sh
+# one-time, over USB, to switch the TV's adbd to TCP
+adb devices                       # accept the "Allow debugging" prompt on the TV
+adb tcpip 5555
+adb connect 192.168.1.50:5555     # then unplug USB
+
+# Android 11 wireless debugging (no USB at all):
+#   TV: Settings > System > Developer options > Wireless debugging > Pair device with pairing code
+sh tools/connect.sh --pair 192.168.1.50:37123 123456
+sh tools/connect.sh 192.168.1.50:5555
+```
+
+**B — agent somewhere else, over a VPN such as Tailscale** (this is how the reference set was built:
+Hermes on a VPS, TV at home):
+
+```sh
+# on the TV: install "Tailscale" from the Play Store, sign in to the same tailnet
+tailscale status                  # on the agent machine; find the peer whose OS is android
+sh tools/connect.sh 100.101.102.103:5555
+```
+
+Details that matter for the VPN path:
+
+- Find the TV by `os: android` in `tailscale status` (or `--json`), not by node name — the owner
+  renames the node to anything.
+- `adb` over TCP goes **offline while the TV sleeps**. Wake the set, then reconnect.
+- Tailscale on Android TV is an app, not a boot service: after a reboot nothing is reachable until
+  it is started. That is what the launcher's boot kick is for — it starts Tailscale once per boot
+  and re-issues HOME only if another activity took over.
+- Never expose port 5555 to the internet. Either keep it on the LAN or reach it through the tailnet
+  and restrict it with ACLs.
+
+Whichever path you use, `sh tools/connect.sh` with no arguments will try mDNS discovery first and
+then walk you through the failure ("unauthorized" means the prompt on the TV was not accepted).
+
 ## Build
 
 Requirements: JDK 17, Android SDK with `platforms/android-34` and `build-tools/34.x`, and `zip`.

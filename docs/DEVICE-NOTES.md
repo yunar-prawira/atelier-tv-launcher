@@ -136,3 +136,23 @@ No private-DNS ad blocking on a Tailscale-connected set: the VPN network reports
 - `screencap` returns 0 bytes while a `FLAG_SECURE` app is foreground (most DRM players): send
   `KEYCODE_HOME` first.
 - Kernel has `ntfs`/`ufsd` but **no `exfat`** — a portable HDD formatted exFAT will never mount.
+
+## Local network instead of a VPN (same Wi-Fi / USB)
+
+The whole project also works without Tailscale — the only requirement is that the machine running
+`adb` can reach the TV's IP.
+
+- Enable **Developer options** on the TV (Settings → System → About → click *Build* seven times),
+  then **USB debugging**, and for wireless also **Network debugging**.
+- Cheapest path: connect USB once, accept the on-screen prompt, run `adb tcpip 5555`, unplug, then
+  `adb connect <TV_LAN_IP>:5555`. This survives until the TV reboots; after a reboot the TCP port is
+  closed again until you repeat it over USB.
+- Android 11 wireless debugging is separate from `adb tcpip`: it uses a random port and needs a
+  pairing code. `adb pair <ip>:<pairing_port> <code>` first, then
+  `adb connect <ip>:<debug_port>` — the pairing port and the debug port are different numbers on the
+  same screen.
+- To find the TV's address without touching the TV: `adb shell ip route` (while connected over USB),
+  or the router's client list. mDNS discovery (`adb mdns services`) is convenient but many routers
+  and guest networks block multicast — fall back to the IP.
+- The TV's IP changes when DHCP hands out a new lease. Give it a static reservation, otherwise a
+  reconnect script will point at a stale address.
