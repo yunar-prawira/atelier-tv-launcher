@@ -6,11 +6,13 @@
 #   sh tools/connect.sh 192.168.1.50          # TV on your LAN
 #   sh tools/connect.sh 100.101.102.103       # TV on your tailnet
 #   sh tools/connect.sh --pair 192.168.1.50:37123 123456
+#   CONNECT_TIMEOUT=20 sh tools/connect.sh 10.0.0.9     # shorter wait than the 120 s default
 #        ^ Android 11 "Wireless debugging -> Pair device with pairing code"
 #          then connect with the *debug* port: sh tools/connect.sh 192.168.1.50:5555
 set -eu
 
 PORT_DEFAULT=5555
+WAIT=${CONNECT_TIMEOUT:-120}          # seconds to wait for the Allow prompt / the device to answer
 say() { printf '%s\n' "$*"; }
 die() { echo "FAILED: $*" >&2; exit 1; }
 
@@ -43,7 +45,7 @@ adb connect "$TARGET" || true
 
 # The first connection lands on "unauthorized" until somebody taps Allow on the TV.
 i=0
-while [ $i -lt 24 ]; do
+while [ $i -lt $((WAIT / 5)) ]; do
   STATE=$(adb -s "$TARGET" get-state 2>/dev/null || true)
   case "$STATE" in
     device) break ;;
