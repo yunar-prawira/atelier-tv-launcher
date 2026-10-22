@@ -63,6 +63,7 @@ public class MainActivity extends Activity {
     private TextView clock;
     private TextView dateline;
     private TextView greeting;
+    private android.widget.HorizontalScrollView scroller;
     private View firstTile;
     private FrameLayout root;
     private List<String> order = new ArrayList<String>();
@@ -382,17 +383,31 @@ public class MainActivity extends Activity {
         root.addView(header, headerLp);
 
         // ---- app row (mockup D): glass cards, big, ALL APPS on the far right ----
+        // Six tiles visible; the rest (including ALL APPS) appear as the D-pad scrolls.
+        final android.widget.HorizontalScrollView scroller = new android.widget.HorizontalScrollView(this);
+        scroller.setHorizontalScrollBarEnabled(false);
+        scroller.setClipChildren(false);
+        scroller.setFocusable(false);
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.BOTTOM);
         row.setClipChildren(false);
         row.setPadding(px(128), 0, px(120), 0);
-        FrameLayout.LayoutParams rowLp = new FrameLayout.LayoutParams(-1, px(116));
+        scroller.addView(row, new android.widget.FrameLayout.LayoutParams(-2, -1));
+        FrameLayout.LayoutParams rowLp = new FrameLayout.LayoutParams(-1, px(170));
         rowLp.gravity = Gravity.BOTTOM;
-        rowLp.bottomMargin = px(152);
-        root.addView(row, rowLp);
+        rowLp.bottomMargin = px(150);
+        root.addView(scroller, rowLp);
+        this.scroller = scroller;
 
         PackageManager pm = getPackageManager();
+        // Cards adapt to however many apps the row actually holds, so ALL APPS can never be
+        // pushed off-screen: 9 apps + ALL APPS = 10 slots inside a 1672 px track.
+        int track = getResources().getDisplayMetrics().widthPixels - px(128) - px(120);
+        int gap = px(22);
+        // exactly six tiles fill the viewport; the row scrolls for the remainder
+        int cardW = (track - gap * 5) / 6;
+        boolean showLabels = true;
         firstTile = null;
         int shown = 0;
         for (int i = 0; i < order.size() && shown < MAX_ROW; i++) {
@@ -404,14 +419,14 @@ public class MainActivity extends Activity {
                 icon = pm.getApplicationIcon(pkg);
                 label = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString().toUpperCase(Locale.US);
             } catch (Exception missing) { continue; }
-            View card = appCard(label, icon, new Runnable() {
+            View card = appCard(label, icon, showLabels, new Runnable() {
                 @Override public void run() {
                     if (editMode) { showMenu(pkg, index, false); } else { launchPackage(pkg); }
                 }
             }, new Runnable() {
                 @Override public void run() { showMenu(pkg, index, false); }
             });
-            row.addView(card, cardLp(shown == 0));
+            row.addView(card, cardLp(cardW));
             tileViews.add(card);
             if (firstTile == null) { firstTile = card; }
             shown++;
@@ -429,15 +444,15 @@ public class MainActivity extends Activity {
             empty.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View v) { showAllApps(); }
             });
-            LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(px(420), px(116));
+            LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(px(420), px(150));
             elp.rightMargin = px(22);
             row.addView(empty, elp);
             firstTile = empty;
             tileViews.add(empty);
         }
 
-        View allApps = allAppsCard();
-        row.addView(allApps, cardLp(false));
+        View allApps = allAppsCard(showLabels);
+        row.addView(allApps, cardLp(cardW));
 
         TextView mark = new TextView(this);
         mark.setText(readTitle());
@@ -453,12 +468,8 @@ public class MainActivity extends Activity {
         LinearLayout dock = new LinearLayout(this);
         dock.setOrientation(LinearLayout.HORIZONTAL);
         dock.setGravity(Gravity.CENTER_VERTICAL);
-        GradientDrawable pillBg = new GradientDrawable();
-        pillBg.setColor(0x1AFFFFFF);
-        pillBg.setCornerRadius(px(33));
-        pillBg.setStroke(Math.max(1, px(1)), 0x33FBF8F3);
-        dock.setBackground(pillBg);
-        dock.setPadding(px(46), 0, px(46), 0);
+        dock.setBackground(null);
+        dock.setPadding(0, 0, 0, 0);
         dock.addView(dockItem("INPUT", new Runnable() {
             @Override public void run() { openQuickPanel(); }
         }));
@@ -475,9 +486,9 @@ public class MainActivity extends Activity {
             @Override public void run() { editMode = !editMode; buildHome(); }
         }));
 
-        FrameLayout.LayoutParams dockLp = new FrameLayout.LayoutParams(-2, px(66));
+        FrameLayout.LayoutParams dockLp = new FrameLayout.LayoutParams(-2, px(58));
         dockLp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
-        dockLp.bottomMargin = px(52);
+        dockLp.bottomMargin = px(48);
         if (moveMode) {
             dock.setDescendantFocusability(android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS);
             dock.setAlpha(0.45f);
@@ -1209,72 +1220,95 @@ public class MainActivity extends Activity {
     }
 
     /** Glass card that holds one app: plate + label, mockup D geometry (220x116 @1920 canvas). */
-    private View appCard(String label, Drawable icon, final Runnable onClick, final Runnable onLong) {
+    private View appCard(String label, Drawable icon, boolean withLabel,
+                         final Runnable onClick, final Runnable onLong) {
         TileBox box = new TileBox(this);
-        box.setOrientation(LinearLayout.HORIZONTAL);
-        box.setGravity(Gravity.CENTER_VERTICAL);
-        box.setPadding(px(26), 0, px(18), 0);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
+        box.setPadding(px(6), px(6), px(6), px(4));
         box.setFocusable(true);
         box.setFocusableInTouchMode(true);
-        box.setBackground(cardFrame());
+        box.setBackground(null);
         box.setLongAction(onLong);
         box.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { onClick.run(); }
         });
 
-        FrameLayout plate = new FrameLayout(this);
-        GradientDrawable plateBg = new GradientDrawable();
-        plateBg.setColor(0x1AFFFFFF);
-        plateBg.setCornerRadius(px(17));
-        plate.setBackground(plateBg);
+        // The icon keeps its native artwork: no plate, no tint, no shrink.
+        FrameLayout holder = new FrameLayout(this);
+        holder.setBackground(iconFrame());
         ImageView img = new ImageView(this);
         img.setImageDrawable(icon);
-        img.setAlpha(0.95f);
-        plate.addView(img, new FrameLayout.LayoutParams(px(44), px(44), Gravity.CENTER));
-        box.addView(plate, new LinearLayout.LayoutParams(px(62), px(62)));
+        holder.addView(img, new FrameLayout.LayoutParams(px(96), px(96), Gravity.CENTER));
+        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(px(112), px(112));
+        hlp.bottomMargin = px(10);
+        box.addView(holder, hlp);
 
         TextView tv = new TextView(this);
         tv.setText(label);
         tv.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(15));
         tv.setTextColor(INK);
-        tv.setAlpha(0.94f);
-        tv.setLetterSpacing(0.10f);
+        tv.setAlpha(0.88f);
+        tv.setLetterSpacing(0.04f);
+        tv.setGravity(Gravity.CENTER_HORIZONTAL);
         tv.setMaxLines(1);
         tv.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-2, -2);
-        tlp.leftMargin = px(20);
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-1, -2);
+        tlp.leftMargin = px(4);
+        tlp.rightMargin = px(4);
         box.addView(tv, tlp);
+        box.setOnFocusChangeListener(new View.OnFocusChangeListener() {
+            @Override public void onFocusChange(View v, boolean focused) {
+                if (!focused || scroller == null) { return; }
+                int margin = px(128);
+                int target = v.getLeft() - margin + (v.getWidth() - scroller.getWidth() + margin) / 2;
+                scroller.smoothScrollTo(Math.max(0, Math.min(target, Math.max(0,
+                        ((View) v.getParent()).getWidth() - scroller.getWidth()))), 0);
+            }
+        });
         return box;
     }
 
+    /** Focus is shown as a champagne ring around the artwork, not a card behind it. */
+    private StateListDrawable iconFrame() {
+        StateListDrawable d = new StateListDrawable();
+        GradientDrawable on = new GradientDrawable();
+        on.setColor(0x14FFFFFF);
+        on.setCornerRadius(px(22));
+        on.setStroke(Math.max(2, px(2)), GOLD);
+        GradientDrawable off = new GradientDrawable();
+        off.setColor(0x00000000);
+        off.setCornerRadius(px(22));
+        d.addState(new int[]{android.R.attr.state_focused}, on);
+        d.addState(new int[]{}, off);
+        return d;
+    }
+
     /** The far-right door to every launchable app: outline card, grid glyph, no brand colour. */
-    private View allAppsCard() {
+    private View allAppsCard(boolean withLabel) {
         TileBox box = new TileBox(this);
-        box.setOrientation(LinearLayout.HORIZONTAL);
-        box.setGravity(Gravity.CENTER_VERTICAL);
-        box.setPadding(px(26), 0, px(18), 0);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
+        box.setPadding(px(6), px(6), px(6), px(4));
         box.setFocusable(true);
         box.setFocusableInTouchMode(true);
-        box.setBackground(cardFrame());
+        box.setBackground(null);
 
-        FrameLayout plate = new FrameLayout(this);
-        GradientDrawable plateBg = new GradientDrawable();
-        plateBg.setColor(0x0DFFFFFF);
-        plateBg.setCornerRadius(px(17));
-        plateBg.setStroke(Math.max(1, px(1)), 0x4DFBF8F3);
-        plate.setBackground(plateBg);
-        plate.addView(new GridGlyph(this), new FrameLayout.LayoutParams(px(32), px(32), Gravity.CENTER));
-        box.addView(plate, new LinearLayout.LayoutParams(px(62), px(62)));
+        FrameLayout holder = new FrameLayout(this);
+        holder.setBackground(iconFrame());
+        holder.addView(new GridGlyph(this), new FrameLayout.LayoutParams(px(56), px(56), Gravity.CENTER));
+        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(px(112), px(112));
+        hlp.bottomMargin = px(10);
+        box.addView(holder, hlp);
 
         TextView tv = new TextView(this);
         tv.setText("ALL APPS");
         tv.setTextSize(TypedValue.COMPLEX_UNIT_PX, px(15));
         tv.setTextColor(INK);
-        tv.setAlpha(0.85f);
-        tv.setLetterSpacing(0.10f);
-        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-2, -2);
-        tlp.leftMargin = px(20);
-        box.addView(tv, tlp);
+        tv.setAlpha(0.8f);
+        tv.setLetterSpacing(0.08f);
+        tv.setGravity(Gravity.CENTER_HORIZONTAL);
+        box.addView(tv, new LinearLayout.LayoutParams(-1, -2));
 
         box.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { showAllApps(); }
@@ -1282,8 +1316,8 @@ public class MainActivity extends Activity {
         return box;
     }
 
-    private LinearLayout.LayoutParams cardLp(boolean first) {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(px(220), px(116));
+    private LinearLayout.LayoutParams cardLp(int width) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(width, px(150));
         lp.rightMargin = px(22);
         return lp;
     }
@@ -1311,16 +1345,25 @@ public class MainActivity extends Activity {
         v.setTextColor(new android.content.res.ColorStateList(
                 new int[][]{new int[]{android.R.attr.state_focused}, new int[]{}},
                 new int[]{GOLD, 0xCCFBF8F3}));
-        v.setPadding(px(20), px(8), px(20), px(8));
+        v.setPadding(px(30), px(10), px(30), px(10));
+        v.setGravity(Gravity.CENTER);
         v.setFocusable(true);
         v.setFocusableInTouchMode(true);
         GradientDrawable focused = new GradientDrawable();
-        focused.setColor(0x26FFFFFF);
+        focused.setColor(0x33FFFFFF);
         focused.setCornerRadius(px(26));
+        focused.setStroke(Math.max(2, px(2)), GOLD);
+        GradientDrawable idle = new GradientDrawable();
+        idle.setColor(0x1AFFFFFF);
+        idle.setCornerRadius(px(26));
+        idle.setStroke(Math.max(1, px(1)), 0x33FBF8F3);
         StateListDrawable bg = new StateListDrawable();
         bg.addState(new int[]{android.R.attr.state_focused}, focused);
-        bg.addState(new int[]{}, new GradientDrawable());
+        bg.addState(new int[]{}, idle);
         v.setBackground(bg);
+        LinearLayout.LayoutParams dlp2 = new LinearLayout.LayoutParams(-2, px(52));
+        dlp2.rightMargin = px(14);
+        v.setLayoutParams(dlp2);
         v.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View x) { action.run(); }
         });
@@ -1559,17 +1602,37 @@ public class MainActivity extends Activity {
     private class Stage extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private Drawable wallpaper;
+        private Drawable photo;
 
         Stage() {
             super(MainActivity.this);
             setFocusable(false);
             try { wallpaper = WallpaperManager.getInstance(MainActivity.this).getDrawable(); }
             catch (Exception ignored) { wallpaper = null; }
+            try {
+                java.io.InputStream is = getAssets().open("bg.jpg");
+                photo = new android.graphics.drawable.BitmapDrawable(getResources(),
+                        android.graphics.BitmapFactory.decodeStream(is));
+                is.close();
+            } catch (Exception ignored) { photo = null; }
         }
 
         @Override protected void onDraw(Canvas c) {
             int w = getWidth(), h = getHeight();
             if (w == 0 || h == 0) { return; }
+
+            if (photo != null) {
+                photo.setBounds(0, 0, w, h);
+                photo.draw(c);
+                paint.setShader(new LinearGradient(0, h * 0.45f, 0, h,
+                        new int[]{0x00000000, 0xB3080809}, new float[]{0f, 1f}, Shader.TileMode.CLAMP));
+                c.drawRect(0, h * 0.40f, w, h, paint);
+                paint.setShader(new LinearGradient(w * 0.45f, 0, w, 0,
+                        new int[]{0x00000000, 0x7A080809}, new float[]{0f, 1f}, Shader.TileMode.CLAMP));
+                c.drawRect(w * 0.40f, 0, w, h * 0.45f, paint);
+                paint.setShader(null);
+                return;
+            }
 
             if (wallpaper != null) {
                 wallpaper.setBounds(0, 0, w, h);

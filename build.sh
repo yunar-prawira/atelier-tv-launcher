@@ -40,7 +40,11 @@ mkdir -p out/classes out/dex out/gen/com/yunar/atelier out/res
 
 "$BT/aapt2" compile -o out/res --dir res
 # shellcheck disable=SC2046
-"$BT/aapt2" link -o out/base.apk -I "$JAR" --manifest AndroidManifest.xml \
+# assets/ carries the bundled backdrop photo; pass it only when present.
+ASSETS_ARG=""
+[ -d assets ] && ASSETS_ARG="-A assets"
+# shellcheck disable=SC2086
+"$BT/aapt2" link -o out/base.apk -I "$JAR" --manifest AndroidManifest.xml $ASSETS_ARG \
   --min-sdk-version 21 --target-sdk-version 34 --auto-add-overlay \
   --version-code "$VERSION_CODE" --version-name "$VERSION_NAME" \
   $(ls out/res/*.flat | sed 's/^/-R /')
