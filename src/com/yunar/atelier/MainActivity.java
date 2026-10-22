@@ -1237,6 +1237,7 @@ public class MainActivity extends Activity {
         // The icon keeps its native artwork: no plate, no tint, no shrink.
         FrameLayout holder = new FrameLayout(this);
         holder.setBackground(iconFrame());
+        holder.setDuplicateParentStateEnabled(true);   // focus lives on the tile, not the holder
         ImageView img = new ImageView(this);
         img.setImageDrawable(icon);
         holder.addView(img, new FrameLayout.LayoutParams(px(96), px(96), Gravity.CENTER));
@@ -1260,10 +1261,18 @@ public class MainActivity extends Activity {
         box.setOnFocusChangeListener(new View.OnFocusChangeListener() {
             @Override public void onFocusChange(View v, boolean focused) {
                 if (!focused || scroller == null) { return; }
-                int margin = px(128);
-                int target = v.getLeft() - margin + (v.getWidth() - scroller.getWidth() + margin) / 2;
-                scroller.smoothScrollTo(Math.max(0, Math.min(target, Math.max(0,
-                        ((View) v.getParent()).getWidth() - scroller.getWidth()))), 0);
+                int leftPad = px(140), rightPad = px(140);
+                int view = scroller.getWidth();
+                int scroll = scroller.getScrollX();
+                int tileLeft = v.getLeft(), tileRight = v.getRight();
+                int target = scroll;
+                if (tileRight > scroll + view - rightPad) {
+                    target = tileRight - view + rightPad;
+                } else if (tileLeft < scroll + leftPad) {
+                    target = tileLeft - leftPad;
+                }
+                int max = Math.max(0, ((View) v.getParent()).getWidth() - view);
+                scroller.smoothScrollTo(Math.max(0, Math.min(target, max)), 0);
             }
         });
         return box;
@@ -1296,6 +1305,7 @@ public class MainActivity extends Activity {
 
         FrameLayout holder = new FrameLayout(this);
         holder.setBackground(iconFrame());
+        holder.setDuplicateParentStateEnabled(true);
         holder.addView(new GridGlyph(this), new FrameLayout.LayoutParams(px(56), px(56), Gravity.CENTER));
         LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(px(112), px(112));
         hlp.bottomMargin = px(10);
@@ -1599,6 +1609,15 @@ public class MainActivity extends Activity {
     }
 
     /** Google TV wallpaper (when one is set) behind a scrim; gradient only as a fallback. */
+    private final Paint washPaint = new Paint();
+
+    private Paint paintWash(int color) {
+        washPaint.setStyle(Paint.Style.FILL);
+        washPaint.setShader(null);
+        washPaint.setColor(color);
+        return washPaint;
+    }
+
     private class Stage extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private Drawable wallpaper;
@@ -1611,8 +1630,10 @@ public class MainActivity extends Activity {
             catch (Exception ignored) { wallpaper = null; }
             try {
                 java.io.InputStream is = getAssets().open("bg.jpg");
+                android.graphics.BitmapFactory.Options opt = new android.graphics.BitmapFactory.Options();
+                opt.inPreferredConfig = android.graphics.Bitmap.Config.RGB_565;   // 4 MB, not 8
                 photo = new android.graphics.drawable.BitmapDrawable(getResources(),
-                        android.graphics.BitmapFactory.decodeStream(is));
+                        android.graphics.BitmapFactory.decodeStream(is, null, opt));
                 is.close();
             } catch (Exception ignored) { photo = null; }
         }
@@ -1624,12 +1645,17 @@ public class MainActivity extends Activity {
             if (photo != null) {
                 photo.setBounds(0, 0, w, h);
                 photo.draw(c);
-                paint.setShader(new LinearGradient(0, h * 0.45f, 0, h,
+                // even wash so ivory type keeps its contrast over a bright aurora
+                c.drawRect(0, 0, w, h, paintWash(0x2E080809));
+                paint.setShader(new LinearGradient(w * 0.30f, 0, w, 0,
+                        new int[]{0x00000000, 0x8C080809}, new float[]{0f, 1f}, Shader.TileMode.CLAMP));
+                c.drawRect(w * 0.25f, 0, w, h * 0.62f, paint);
+                paint.setShader(new LinearGradient(0, h * 0.42f, 0, h,
                         new int[]{0x00000000, 0xB3080809}, new float[]{0f, 1f}, Shader.TileMode.CLAMP));
-                c.drawRect(0, h * 0.40f, w, h, paint);
-                paint.setShader(new LinearGradient(w * 0.45f, 0, w, 0,
-                        new int[]{0x00000000, 0x7A080809}, new float[]{0f, 1f}, Shader.TileMode.CLAMP));
-                c.drawRect(w * 0.40f, 0, w, h * 0.45f, paint);
+                c.drawRect(0, h * 0.38f, w, h, paint);
+                paint.setShader(new LinearGradient(0, 0, w * 0.22f, 0,
+                        new int[]{0x59080809, 0x00000000}, new float[]{0f, 1f}, Shader.TileMode.CLAMP));
+                c.drawRect(0, 0, w * 0.22f, h * 0.22f, paint);
                 paint.setShader(null);
                 return;
             }
