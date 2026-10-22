@@ -21,8 +21,8 @@ command -v zip >/dev/null 2>&1 || { echo "zip is required (apt install zip)." >&
 : "${KEYSTORE_PASS:?set KEYSTORE_PASS to your keystore password - never commit the keystore}"
 
 [ -f apps.txt ] || cp apps.txt.example apps.txt
-VERSION_CODE=${VERSION_CODE:-3}
-VERSION_NAME=${VERSION_NAME:-1.2}
+VERSION_CODE=4
+VERSION_NAME=1.3
 
 rm -rf out
 mkdir -p out/classes out/dex out/gen/com/yunar/atelier out/res
