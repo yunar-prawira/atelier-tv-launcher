@@ -1,13 +1,15 @@
-# Atelier — a quiet home screen for a TCL Google TV
+# Atelier — a quiet home screen for Android TV / Google TV
 
 An Android TV launcher (~30 KB) that replaces the ad-filled stock home screen, written in plain
 Java and built **without Gradle or Android Studio**. It is deliberately boring: a clock, one
 row of apps you choose, and a dock with Input / Applications / Settings / Setup / Edit.
 
-Everything here was developed against one specific set: **TCL 43A30 (Smart TV Pro),
+Everything here was developed against one specific set — **TCL 43A30 (Smart TV Pro),
 Android 11, platform `BeyondTV4`, 2 GB RAM**, driven only by a D-pad remote, reached over
-`adb` on a Tailscale network. Vendor firmware outranks documentation, so the quirks in
-[`docs/DEVICE-NOTES.md`](docs/DEVICE-NOTES.md) are the most valuable part of this repo.
+`adb` on a Tailscale network — which is why [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md)
+separates what is universal from what is vendor-specific. Vendor firmware outranks documentation,
+so the quirks in [`docs/DEVICE-NOTES.md`](docs/DEVICE-NOTES.md) are the most valuable part of this
+repo.
 
 ## What it does
 
@@ -24,11 +26,13 @@ Android 11, platform `BeyondTV4`, 2 GB RAM**, driven only by a D-pad remote, rea
 - **Vendor gear key**: an accessibility service catches the remote's gear key (vendor keycode
   `4077`, *not* `KEYCODE_SETTINGS`) from **any** foreground app — single press opens TCL's quick
   panel, double press opens full TV Settings. MENU / GUIDE are deliberately left to the app.
-- **HDMI ARC re-arm**: at boot and on screen wake the launcher toggles
-  `hdmi_system_audio_control_enabled` off/on, which wakes a soundbar that is sitting in CEC
-  standby while the TV already routes audio to ARC.
-- **Boot kick for the VPN**: Android TV does not auto-start Tailscale after a reboot; the
-  launcher starts it once per boot so remote `adb` access comes back by itself.
+- **Remote link** (see below): the app dials out to your machine so the set stays reachable even
+  after Android kills `adbd` in deep sleep, and it restarts Tailscale only when the tunnel is
+  actually down.
+- **Optional — HDMI ARC repair**: for sets whose soundbar sits in CEC standby while the TV keeps the
+  route pinned to ARC. This is a *good to have*, not a headline feature: many setups never need it,
+  and the fix is intentionally inert unless the link is already broken. Read
+  [`docs/AUDIO-ARC.md`](docs/AUDIO-ARC.md) only if sound goes missing after a long sleep.
 
 ## What a replicator needs — and what this repo does not contain
 
@@ -211,24 +215,18 @@ inbound has to reach the TV at all.
 
 ## Does it work on other TVs, and with other agents?
 
-**Other Android TV / Google TV sets:** the launcher itself is plain Java against the Android SDK
-(aapt2 + javac + d8, no Gradle, no vendor SDK) and runs on any set with API 21+. What is
-TCL-specific is the *service layer*, not the UI:
+Short version: the launcher and the remote channel are portable; the **service layer** is where
+vendor firmware shows up. Every piece is flagged **UNIVERSAL**, **TCL** or **UNTESTED** (plausible
+elsewhere, never verified on a second brand) in [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md),
+including what to swap on another set. The HDMI ARC repair is deliberately filed there as optional.
 
-| Piece | Portable? |
-|---|---|
-| Home screen, tiles, dock, drawer, backdrop | yes — pure platform views |
-| ARC auto-repair (`hdmi_control_enabled` off → 15 s → on) | the setting is AOSP, but the *reason* it is needed (`mArcEstablished=false` with the route pinned to `hmdi_arc`) was measured on TCL; verify per model |
-| `persist.tcl.isARCConnect` health probe | no — vendor property; substitute your model's equivalent or drop the probe |
-| Forced OFF before uninstall (`tools/uninstall.sh`) | pattern is portable, package names are not |
-| Vendor gear key remap (keycode 4077) | no — per-vendor keymaps differ |
-| Foreground-service link channel | yes — standard HTTP, no vendor APIs |
-| Accessibility bind workaround (APP_AUTO_START appop) | TCL-specific; remove if not needed |
+For non-Hermes agents: [`docs/AGENT-PLAYBOOK.md`](docs/AGENT-PLAYBOOK.md) needs only shell access,
+image reading, a scratch file and a status file. Nothing in this repo imports an agent API; the
+app is stdlib Java and the reference agent host is stdlib Python 3.
 
-**Other agents (not just Hermes):** `docs/AGENT-PLAYBOOK.md` was written for exactly this — it needs
-only shell access, image reading, a scratch file and a status file, so Claude Code, Codex CLI,
-Cursor or a home-grown loop can drive the same loop. Nothing in the repo imports a Hermes API; the
-VM-side agent is stdlib Python 3 and the app is stdlib Java.
+The bundled backdrop is `assets/bg.jpg` (1920x1080, packed into the APK and drawn full-bleed with
+scrims). It ships with the repo so the home screen looks finished out of the box — replace it with
+your own photo, ideally 3840x2160 or larger if your panel is 4K.
 
 ## Repo layout
 
@@ -241,6 +239,13 @@ build.sh                                  aapt2 + javac + d8 + zipalign + apksig
 tools/install.sh, tools/uninstall.sh      verified install / safe removal
 tools/*.sh                                read-only diagnostics (storage, CEC audio, wake)
 docs/DEVICE-NOTES.md                      the TCL-specific findings, in detail
+docs/COMPATIBILITY.md                     UNIVERSAL vs TCL vs UNTESTED, per piece
+docs/AUDIO-ARC.md                         optional soundbar repair (not needed by everyone)
+docs/AGENT-PLAYBOOK.md                    driving this repo with any AI agent
+src/com/yunar/atelier/NetLink.java        outbound link: keeps the set reachable when adbd dies
+src/com/yunar/atelier/ControlService.java foreground service that keeps that link alive
+tools/link/                               reference agent host (Python 3, stdlib only)
+assets/bg.jpg                             the bundled backdrop (1920x1080)
 ```
 
 ## Licence
