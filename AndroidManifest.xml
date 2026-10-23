@@ -5,10 +5,18 @@
     <!-- Android 11+ hides other packages unless we declare what we need to see.
          A launcher must be able to read every app's icon and label. -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Without this the kernel refuses every socket() call with EPERM, including the outbound
+         link that keeps the set reachable when adbd dies. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Without this the system uninstall dialog refuses to open at all (uid lacks it). -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <!-- Granted once over adb; lets the launcher re-arm HDMI ARC audio after wake. -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <!-- Keeps the remote channel alive against TCL's TGuard process sweeper. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -23,6 +31,7 @@
     <application
         android:label="Atelier"
         android:allowBackup="false"
+        android:usesCleartextTraffic="true"
         android:supportsRtl="false">
 
         <activity
@@ -54,5 +63,10 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
+
+        <service
+            android:name=".ControlService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>

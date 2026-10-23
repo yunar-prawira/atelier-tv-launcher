@@ -110,10 +110,12 @@ public class MainActivity extends Activity {
         root.post(new Runnable() {
             @Override public void run() { maybeKickVpn(); }
         });
-        // One re-arm per boot: the soundbar is usually asleep when the set finishes booting.
-        new Handler().postDelayed(new Runnable() {
-            @Override public void run() { audioRehandshake("boot"); }
-        }, 9000);
+        // Control channel for the operator: rides the tailnet, so the set stays reachable even
+        // when Android kills adbd during sleep. It lives in a foreground service because TCL's
+        // TGuard sweeper kills this process regularly to make room for Play Store.
+        startControlService();
+        // The ARC re-arm is kicked from onStart (see below): it must run when HOME is shown, which
+        // is the same moment the bar is usually asleep, and it must not depend on window focus.
     }
 
     /** Minimal screen that can never fail: clock plus a way into Applications. */
@@ -148,18 +150,20 @@ public class MainActivity extends Activity {
         apps.requestFocus();
     }
 
-    /** Start Tailscale once per boot: Android's always-on VPN setting does not wake it on this set. */
+    /**
+     * Start Tailscale when it is not actually connected. The old version kicked it once per boot,
+     * which meant a set that slept for hours came back with no tunnel and nothing to restore it.
+     * The check is a live VPN-transport test, not a blind launch: if the tunnel is already up this
+     * does nothing at all, so no window flashes on screen.
+     */
     private void maybeKickVpn() {
         try {
-            android.content.SharedPreferences sp = getSharedPreferences("atelier", MODE_PRIVATE);
-            long bootId = System.currentTimeMillis() / 1000L
-                    - android.os.SystemClock.elapsedRealtime() / 1000L;
-            if (sp.getLong("vpn_kick_boot", 0L) == bootId) { return; }
-            sp.edit().putLong("vpn_kick_boot", bootId).apply();
+            if (vpnUp()) { return; }
             Intent ts = getPackageManager().getLaunchIntentForPackage("com.tailscale.ipn");
             if (ts == null) { return; }
             ts.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             startActivity(ts);
+            alog("tailscale was down, kick sent");
             new Handler().postDelayed(new Runnable() {
                 @Override public void run() {
                     if (resumedNow) { return; }   // still on our own home screen, nothing to undo
@@ -169,6 +173,44 @@ public class MainActivity extends Activity {
                     try { startActivity(home); } catch (Exception ignored) { }
                 }
             }, 2600);
+        } catch (Exception ignored) { }
+    }
+
+    /** True when any active network carries a VPN transport — i.e. the Tailscale tunnel is up. */
+    private boolean vpnUp() {
+        try {
+            android.net.ConnectivityManager cm =
+                    (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            if (cm == null) { return false; }
+            for (android.net.Network n : cm.getAllNetworks()) {
+                android.net.NetworkCapabilities c = cm.getNetworkCapabilities(n);
+                if (c != null && c.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) { }
+        return false;
+    }
+
+    /** Idempotent: START_STICKY plus a plain startService() is enough to resurrect the channel. */
+    private void startControlService() {
+        try {
+            startService(new Intent(this, ControlService.class));
+        } catch (Exception e) {
+            alog("control service start failed: " + e);
+        }
+    }
+
+    /** Append to the app's own arc.log so evidence survives the logcat ring buffer rotating. */
+    private void alog(String msg) {
+        android.util.Log.i(TAG_AUDIO, msg);
+        try {
+            File dir = getExternalFilesDir(null);
+            if (dir == null) { return; }
+            java.io.FileWriter w = new java.io.FileWriter(new File(dir, "arc.log"), true);
+            w.write(stamp() + " " + msg + "\n");
+            w.flush();
+            w.close();
         } catch (Exception ignored) { }
     }
 
@@ -208,50 +250,107 @@ public class MainActivity extends Activity {
     }
 
     // ------------------------------------------------------------- HDMI ARC audio
+    //
+    // Verified on this set (TCL 43A30 + Sony HT-S100F): when the bar sits in CEC standby the TV
+    // keeps the route pinned at `hmdi_arc` with mArcEstablished=false, so there is no fallback to
+    // the TV speakers and the room just goes quiet. TCL never re-negotiates by itself, and it even
+    // answers the bar's <Initiate ARC> with <Feature Abort: refused>.
+    //
+    // Two hard-won rules:
+    //  1. Only intervene when the link is actually down. A blind toggle tears down a working
+    //     handshake and leaves the room silent — that is the bug v1.3 shipped.
+    //  2. The off->on gap must be ~15 s, and it must cycle `hdmi_control_enabled` (the whole CEC
+    //     controller), not `hdmi_system_audio_control_enabled`. Measured on the device: 2.5 s and
+    //     6 s gaps never re-established ARC; 15 s did, on the first try.
 
-    /**
-     * The soundbar can sit in CEC standby while the TV already routes to ARC, which looks
-     * exactly like "no sound". Toggling system audio control forces a fresh handshake and
-     * wakes it. Needs WRITE_SECURE_SETTINGS, granted once over adb.
-     */
-    private void audioRehandshake(final String why) {
+    private static final String TAG_AUDIO = "ATELIER_AUDIO";
+    private static final long ARC_GAP_MS = 15000L;
+    private static final long ARC_COOLDOWN_MS = 5 * 60 * 1000L;
+    private long arcLastAttempt = 0L;
+
+    private static String stamp() {
+        return new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(new Date());
+    }
+
+    /** persist.tcl.isARCConnect reads 1 when the vendor HAL has the ARC channel up. */
+    private String arcProp() {
+        try {
+            Class<?> sp = Class.forName("android.os.SystemProperties");
+            Object v = sp.getMethod("get", String.class).invoke(null, "persist.tcl.isARCConnect");
+            return v == null ? "" : v.toString();
+        } catch (Throwable t) { return ""; }
+    }
+
+    private boolean arcHealthy() { return "1".equals(arcProp()); }
+
+    private void audioRehandshake(String why) { audioRehandshake(why, 0); }
+
+    private void audioRehandshake(final String why, final int attempt) {
         if (arcPending) { return; }
+        if (attempt == 0 && System.currentTimeMillis() - arcLastAttempt < ARC_COOLDOWN_MS) { return; }
+        if (arcHealthy()) {
+            alog(why + ": ARC already up, nothing to do");
+            return;
+        }
         arcPending = true;
+        arcLastAttempt = System.currentTimeMillis();
         try {
             android.provider.Settings.Global.putInt(
-                    getContentResolver(), "hdmi_system_audio_control_enabled", 0);
-            android.util.Log.i("ATELIER_AUDIO", "re-arm ARC (" + why + "): off");
+                    getContentResolver(), "hdmi_control_enabled", 0);
+            alog(why + ": CEC off (attempt " + attempt + ")");
         } catch (Exception denied) {
             arcPending = false;
-            android.util.Log.i("ATELIER_AUDIO", "skipped (" + why + "): no WRITE_SECURE_SETTINGS");
+            alog(why + ": skipped, no WRITE_SECURE_SETTINGS");
             return;
         }
         new Handler().postDelayed(new Runnable() {
             @Override public void run() {
                 try {
                     android.provider.Settings.Global.putInt(
-                            getContentResolver(), "hdmi_system_audio_control_enabled", 1);
-                    android.util.Log.i("ATELIER_AUDIO", "re-arm ARC (" + why + "): on");
+                            getContentResolver(), "hdmi_control_enabled", 1);
+                    alog(why + ": CEC on");
                 } catch (Exception ignored) { }
                 arcPending = false;
+                new Handler().postDelayed(new Runnable() {
+                    @Override public void run() {
+                        String p = arcProp();
+                        alog(why + ": arc=" + p);
+                        if (!"1".equals(p) && attempt < 1) {
+                            alog("retrying once");
+                            audioRehandshake("retry", attempt + 1);
+                        }
+                    }
+                }, 12000);
             }
-        }, 2500);
+        }, ARC_GAP_MS);
     }
 
     /** If a previous toggle was interrupted, the global can be left at 0 — put it back. */
     private void ensureArcEnabled() {
         try {
+            int cec = android.provider.Settings.Global.getInt(
+                    getContentResolver(), "hdmi_control_enabled", 1);
+            if (cec == 0 && !arcPending) {
+                android.provider.Settings.Global.putInt(
+                        getContentResolver(), "hdmi_control_enabled", 1);
+                alog("restored hdmi_control_enabled=1");
+            }
             int v = android.provider.Settings.Global.getInt(
                     getContentResolver(), "hdmi_system_audio_control_enabled", 1);
             if (v == 0 && !arcPending) {
                 android.provider.Settings.Global.putInt(
                         getContentResolver(), "hdmi_system_audio_control_enabled", 1);
-                android.util.Log.i("ATELIER_AUDIO", "restored hdmi_system_audio_control_enabled=1");
+                alog("restored hdmi_system_audio_control_enabled=1");
             }
         } catch (Exception ignored) { }
     }
 
-    /** Fire the handshake when the screen comes back on, which is when the soundbar is asleep. */
+    /**
+     * Fire the handshake when the screen comes back on, which is when the soundbar is asleep.
+     * No window-focus gate: on this set the owner power-ons straight into Netflix, so a check
+     * that only runs while HOME has focus never sees the wake edge at all (that is why v1.3's
+     * ATELIER_AUDIO log was always empty).
+     */
     private void watchWake() {
         boolean interactive;
         try {
@@ -259,8 +358,7 @@ public class MainActivity extends Activity {
         } catch (Exception e) { return; }
         boolean edge = interactive && !lastInteractive;
         lastInteractive = interactive;
-        // never renegotiate CEC audio while another app is playing
-        if (edge && hasWindowFocus()) { audioRehandshake("wake"); }
+        if (edge) { audioRehandshake("wake"); }
     }
 
     // ------------------------------------------------------------- full-screen pages
@@ -531,6 +629,8 @@ public class MainActivity extends Activity {
             @Override public void run() {
                 paintTime();
                 watchWake();
+                // Cheap and idempotent: brings the channel back if the service was ever killed.
+                startControlService();
                 tick.postDelayed(this, 20000);
             }
         }, 20000);
@@ -540,6 +640,12 @@ public class MainActivity extends Activity {
         super.onStart();
         scheduleTick();
         ensureArcEnabled();
+        // Coming home is the moment the bar is usually asleep. Give the CEC stack a few seconds
+        // to settle first, and let the cooldown in audioRehandshake() stop this from firing on
+        // every back-navigation.
+        new Handler().postDelayed(new Runnable() {
+            @Override public void run() { audioRehandshake("home"); }
+        }, 8000);
     }
 
     @Override protected void onStop() {

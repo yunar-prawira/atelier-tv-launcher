@@ -188,6 +188,48 @@ adb shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c 
 adb uninstall com.yunar.atelier
 ```
 
+## Remote control after the set sleeps (portable)
+
+Android kills `adbd` on deep sleep and many vendor firmwares never restart the TCP listener, so
+`adb connect` comes back `offline` until a human re-toggles Developer options. An app cannot fix
+that without root. The fix here inverts the direction: **the launcher dials out**, so nothing
+inbound has to reach the TV at all.
+
+- `NetLink.java` POSTs `{state, last_result}` to your machine every ~8 s and receives at most one
+  whitelisted command in the reply. `ControlService` keeps it in a **foreground service** — on TCL,
+  `TGuardService` reaps idle apps ("killing pkg … is not depends on com.android.vending") and a
+  plain thread disappears within a minute.
+- Configuration lives outside the APK, in the app's external files dir: `link.host`
+  (`"<agent-host>:7391"`) and `link.token`. Missing either one means "no link", never a crash.
+- `~/atelier-link/atelier_link.py` is the reference rendezvous: token-auth `/sync` for the TV, plus
+  an admin port bound to **localhost only** to enqueue commands and read the last state.
+- State is read with app APIs (`PowerManager`, `AudioManager`, `persist.tcl.isARCConnect`), because
+  an untrusted uid cannot call `dumpsys` or read `/proc`.
+- Two permissions/traps worth knowing before you debug "the TV blocks sockets": without `INTERNET`
+  **every** `socket()` fails with `EPERM` (it looks exactly like a firewall), and cleartext HTTP
+  needs `android:usesCleartextTraffic="true"` on the application tag.
+
+## Does it work on other TVs, and with other agents?
+
+**Other Android TV / Google TV sets:** the launcher itself is plain Java against the Android SDK
+(aapt2 + javac + d8, no Gradle, no vendor SDK) and runs on any set with API 21+. What is
+TCL-specific is the *service layer*, not the UI:
+
+| Piece | Portable? |
+|---|---|
+| Home screen, tiles, dock, drawer, backdrop | yes — pure platform views |
+| ARC auto-repair (`hdmi_control_enabled` off → 15 s → on) | the setting is AOSP, but the *reason* it is needed (`mArcEstablished=false` with the route pinned to `hmdi_arc`) was measured on TCL; verify per model |
+| `persist.tcl.isARCConnect` health probe | no — vendor property; substitute your model's equivalent or drop the probe |
+| Forced OFF before uninstall (`tools/uninstall.sh`) | pattern is portable, package names are not |
+| Vendor gear key remap (keycode 4077) | no — per-vendor keymaps differ |
+| Foreground-service link channel | yes — standard HTTP, no vendor APIs |
+| Accessibility bind workaround (APP_AUTO_START appop) | TCL-specific; remove if not needed |
+
+**Other agents (not just Hermes):** `docs/AGENT-PLAYBOOK.md` was written for exactly this — it needs
+only shell access, image reading, a scratch file and a status file, so Claude Code, Codex CLI,
+Cursor or a home-grown loop can drive the same loop. Nothing in the repo imports a Hermes API; the
+VM-side agent is stdlib Python 3 and the app is stdlib Java.
+
 ## Repo layout
 
 ```
